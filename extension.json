@@ -1,0 +1,60 @@
+{
+  "name": "Microsoft Entra Authcode Flow BOF",
+  "package_name": "entra-authcode-flow",
+  "version": "v0.0.0",
+  "extension_author": "sliverarmory",
+  "original_author": "sudonoodle",
+  "repo_url": "https://github.com/sliverarmory/BOF-entra-authcode-flow",
+  "commands": [
+    {
+      "command_name": "entra-authcode-flow",
+      "help": "Obtain Microsoft Entra tokens through a browser authorization code flow",
+      "long_help": "Runs in the interactive Windows user's desktop. The user must already have a valid Entra browser session; the client ID must have tenant consent and allow the nativeclient redirect URI. Browser: 0 for Microsoft Edge, 1 for Google Chrome. The BOF watches window titles for up to 15 seconds and reports tokens to the operator. Requires a Sliver client, server, and implant with built-in Reflektor BOF support.",
+      "entrypoint": "go",
+      "bof_executor": "reflektor",
+      "arguments": [
+        {
+          "name": "clientid",
+          "desc": "Entra client application ID",
+          "type": "string",
+          "optional": false
+        },
+        {
+          "name": "scope",
+          "desc": "Space-separated OAuth scopes",
+          "type": "string",
+          "optional": false
+        },
+        {
+          "name": "browser",
+          "desc": "Browser selector: 0 for Edge, 1 for Chrome",
+          "type": "int",
+          "optional": false,
+          "choices": [
+            "0",
+            "1"
+          ]
+        },
+        {
+          "name": "email-hint",
+          "desc": "Optional account hint",
+          "type": "string",
+          "optional": true,
+          "default": ""
+        }
+      ],
+      "files": [
+        {
+          "os": "windows",
+          "arch": "amd64",
+          "path": "dist/entra-authcode-flow.x64.o"
+        },
+        {
+          "os": "windows",
+          "arch": "386",
+          "path": "dist/entra-authcode-flow.x86.o"
+        }
+      ]
+    }
+  ]
+}
