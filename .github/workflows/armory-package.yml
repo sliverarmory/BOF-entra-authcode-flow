@@ -31,7 +31,8 @@ jobs:
           x86_64-w64-mingw32-gcc --version
           i686-w64-mingw32-gcc --version
       - name: Recompile upstream BOFs
-        run: make -B
+        # Inline stack probes avoid the unresolved 386 ___chkstk_ms helper.
+        run: make -B CFLAGS='-Iinclude -mno-stack-arg-probe -fstack-clash-protection'
       - name: Stage and validate unsigned package
         shell: bash
         run: |
@@ -92,6 +93,7 @@ jobs:
           file dist/entra-authcode-flow.x64.o dist/entra-authcode-flow.x86.o
           x86_64-w64-mingw32-objdump -t dist/entra-authcode-flow.x64.o | grep -Eq '[[:space:]]go$'
           i686-w64-mingw32-objdump -t dist/entra-authcode-flow.x86.o | grep -Eq '[[:space:]]_go$'
+          ! i686-w64-mingw32-nm -u dist/entra-authcode-flow.x86.o | grep -Eq '___chkstk_ms$'
           tar -tzf entra-authcode-flow.tar.gz
       - name: Retain unsigned tag package
         if: startsWith(github.ref, 'refs/tags/')
@@ -114,7 +116,7 @@ jobs:
         sudo apt-get install -y --no-install-recommends
         gcc-mingw-w64-x86-64-win32=13.2.0-6ubuntu1+26.1
         gcc-mingw-w64-i686-win32=13.2.0-6ubuntu1+26.1 &&
-        make -B
+        make -B CFLAGS='-Iinclude -mno-stack-arg-probe -fstack-clash-protection'
 
   release:
     if: startsWith(github.ref, 'refs/tags/')
