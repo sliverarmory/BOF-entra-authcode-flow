@@ -102,9 +102,23 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+  bof-e2e:
+    if: github.event_name == 'pull_request' || startsWith(github.ref, 'refs/tags/')
+    uses: sliverarmory/sliver-test-bof/.github/workflows/e2e.yml@6449187d332dc1182e9fcb4c4b6a14ce04a30d37 # v0.1.0
+    permissions:
+      contents: read
+    with:
+      manifest: .github/sliver-bof-e2e.yml
+      prepare-command: >-
+        sudo apt-get update &&
+        sudo apt-get install -y --no-install-recommends
+        gcc-mingw-w64-x86-64-win32=13.2.0-6ubuntu1+26.1
+        gcc-mingw-w64-i686-win32=13.2.0-6ubuntu1+26.1 &&
+        make -B
+
   release:
     if: startsWith(github.ref, 'refs/tags/')
-    needs: build
+    needs: [build, bof-e2e]
     runs-on: ubuntu-24.04
     environment: package-release
     permissions:
