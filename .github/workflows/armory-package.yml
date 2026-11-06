@@ -1,0 +1,177 @@
+name: Build Armory package
+
+on:
+  push:
+    branches: ['**']
+    tags: ['v*']
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: armory-package-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install pinned MinGW compilers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gcc-mingw-w64-x86-64-win32=13.2.0-6ubuntu1+26.1 \
+            gcc-mingw-w64-i686-win32=13.2.0-6ubuntu1+26.1
+          x86_64-w64-mingw32-gcc --version
+          i686-w64-mingw32-gcc --version
+      - name: Recompile upstream BOFs
+        # Inline stack probes avoid the unresolved 386 ___chkstk_ms helper.
+        run: make -B CFLAGS='-Iinclude -mno-stack-arg-probe -fstack-clash-protection'
+      - name: Stage and validate unsigned package
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag=v0.0.0
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            tag="$GITHUB_REF_NAME"
+            [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+            test "$(git rev-parse HEAD)" = "$(git rev-parse "refs/tags/$tag^{commit}")"
+            git fetch --no-tags origin main
+            test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)"
+          fi
+          stage="$RUNNER_TEMP/armory-stage"
+          mkdir -p "$stage/dist"
+          cp LICENSE README.md "$stage/"
+          cp dist/entra-authcode-flow.x64.o dist/entra-authcode-flow.x86.o "$stage/dist/"
+          python3 - "$tag" "$stage/extension.json" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          manifest = json.loads(Path('extension.json').read_bytes())
+          assert manifest['version'] == 'v0.0.0'
+          manifest['version'] = sys.argv[1]
+          Path(sys.argv[2]).write_text(json.dumps(manifest, indent=2) + '\n')
+          PY
+          tar -czf entra-authcode-flow.tar.gz -C "$stage" \
+            ./extension.json ./LICENSE ./README.md \
+            ./dist/entra-authcode-flow.x64.o ./dist/entra-authcode-flow.x86.o
+          python3 - "$tag" <<'PY'
+          import json
+          import tarfile
+          import sys
+
+          expected = {
+              './extension.json', './LICENSE', './README.md',
+              './dist/entra-authcode-flow.x64.o',
+              './dist/entra-authcode-flow.x86.o',
+          }
+          with tarfile.open('entra-authcode-flow.tar.gz', 'r:gz') as archive:
+              members = archive.getmembers()
+              assert {member.name for member in members} == expected
+              assert all(member.isfile() and member.size > 0 for member in members)
+              manifest = json.load(archive.extractfile('./extension.json'))
+          assert manifest['version'] == sys.argv[1]
+          assert manifest['repo_url'] == 'https://github.com/sliverarmory/BOF-entra-authcode-flow'
+          assert len(manifest['commands']) == 1
+          command = manifest['commands'][0]
+          assert command['command_name'] == 'entra-authcode-flow'
+          assert command['entrypoint'] == 'go'
+          assert command['bof_executor'] == 'reflektor'
+          assert 'depends_on' not in command
+          assert {(entry['os'], entry['arch'], entry['path']) for entry in command['files']} == {
+              ('windows', 'amd64', 'dist/entra-authcode-flow.x64.o'),
+              ('windows', '386', 'dist/entra-authcode-flow.x86.o'),
+          }
+          PY
+          file dist/entra-authcode-flow.x64.o dist/entra-authcode-flow.x86.o
+          x86_64-w64-mingw32-objdump -t dist/entra-authcode-flow.x64.o | grep -Eq '[[:space:]]go$'
+          i686-w64-mingw32-objdump -t dist/entra-authcode-flow.x86.o | grep -Eq '[[:space:]]_go$'
+          ! i686-w64-mingw32-nm -u dist/entra-authcode-flow.x86.o | grep -Eq '___chkstk_ms$'
+          tar -tzf entra-authcode-flow.tar.gz
+      - name: Retain unsigned tag package
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: unsigned-armory-package
+          path: entra-authcode-flow.tar.gz
+          if-no-files-found: error
+          retention-days: 1
+
+  bof-e2e:
+    if: github.event_name == 'pull_request' || startsWith(github.ref, 'refs/tags/')
+    uses: sliverarmory/sliver-test-bof/.github/workflows/e2e.yml@6449187d332dc1182e9fcb4c4b6a14ce04a30d37 # v0.1.0
+    permissions:
+      contents: read
+    with:
+      manifest: .github/sliver-bof-e2e.yml
+      prepare-command: >-
+        sudo apt-get update &&
+        sudo apt-get install -y --no-install-recommends
+        gcc-mingw-w64-x86-64-win32=13.2.0-6ubuntu1+26.1
+        gcc-mingw-w64-i686-win32=13.2.0-6ubuntu1+26.1 &&
+        make -B CFLAGS='-Iinclude -mno-stack-arg-probe -fstack-clash-protection'
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [build, bof-e2e]
+    runs-on: ubuntu-24.04
+    environment: package-release
+    permissions:
+      contents: write
+    steps:
+      - name: Check out tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Download validated archive
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: unsigned-armory-package
+      - name: Install signed Ubuntu Minisign package
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends minisign=0.11-1
+          minisign -v
+      - name: Sign and publish package
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MINISIGN_PRIVATE_KEY: ${{ secrets.MINISIGN_PRIVATE_KEY }}
+          MINISIGN_PUBLIC_KEY: ${{ vars.MINISIGN_PUBLIC_KEY }}
+        run: |
+          set -euo pipefail
+          tag="$GITHUB_REF_NAME"
+          [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          test "$(git rev-parse HEAD)" = "$(git rev-parse "refs/tags/$tag^{commit}")"
+          git fetch --no-tags origin main
+          test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)"
+          test -n "$MINISIGN_PRIVATE_KEY"
+          test -n "$MINISIGN_PUBLIC_KEY"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "Release already exists; refusing to replace it" >&2
+            exit 1
+          fi
+          key="$RUNNER_TEMP/minisign.key"
+          trap 'rm -f "$key"' EXIT
+          umask 077
+          printf '%s' "$MINISIGN_PRIVATE_KEY" > "$key"
+          unset MINISIGN_PRIVATE_KEY
+          manifest_b64="$(tar -xOzf entra-authcode-flow.tar.gz ./extension.json | base64 -w0)"
+          minisign -S -s "$key" -m entra-authcode-flow.tar.gz \
+            -x entra-authcode-flow.minisig -t "$manifest_b64"
+          minisign -V -P "$MINISIGN_PUBLIC_KEY" \
+            -m entra-authcode-flow.tar.gz -x entra-authcode-flow.minisig
+          rm -f "$key"
+          trap - EXIT
+          gh release create "$tag" \
+            entra-authcode-flow.tar.gz entra-authcode-flow.minisig \
+            --verify-tag --title "Armory package $tag" \
+            --notes "Windows amd64 and 386 Microsoft Entra Authcode Flow BOF. Built from sudonoodle/BOF-entra-authcode-flow upstream source."

@@ -1,0 +1,43 @@
+schema: sliver-bof-e2e/v1
+
+sliver:
+  version: 9f8f1d11bed7e0f169409d4266c45b7d541b2578
+
+defaults:
+  bof_executor: reflektor
+  entrypoint: go
+  modes: [session, beacon]
+  command_timeout: 2m
+
+suites:
+  - name: windows-amd64
+    target:
+      os: windows
+      arch: amd64
+    tests:
+      - name: reject-unsupported-browser
+        object: dist/entra-authcode-flow.x64.o
+        args:
+          - {type: string, value: '00000000-0000-0000-0000-000000000000'}
+          - {type: string, value: openid}
+          - {type: int, value: 2}
+          - {type: string, value: ''}
+        expect:
+          output:
+            contains: ['Invalid browser index. Must be 0 (Edge) or 1 (Chrome).']
+
+  - name: windows-386
+    target:
+      os: windows
+      arch: '386'
+    tests:
+      - name: reject-unsupported-browser
+        object: dist/entra-authcode-flow.x86.o
+        args:
+          - {type: string, value: '00000000-0000-0000-0000-000000000000'}
+          - {type: string, value: openid}
+          - {type: int, value: 2}
+          - {type: string, value: ''}
+        expect:
+          output:
+            contains: ['Invalid browser index. Must be 0 (Edge) or 1 (Chrome).']
